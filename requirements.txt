@@ -1,0 +1,10 @@
+giotto-tda>=0.6
+numpy
+pandas
+scipy
+requests
+pyarrow
+matplotlib
+seaborn
+pytest
+jupyter
