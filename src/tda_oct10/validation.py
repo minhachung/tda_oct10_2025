@@ -4,6 +4,10 @@ End-to-end validation utilities: synthetic-system sanity checks (e.g. Lorenz,
 noisy circles), parameter sensitivity sweeps over Takens embedding dimension
 and delay, and reproducibility checks for the full pipeline.
 
+Default ``GIDEA_MAX_EDGE_LENGTH = 0.10`` calibrated by parameter sweep on
+BTC/ETH/LTC/XRP daily log-returns, 2016-01-02 to 2018-01-07 (CryptoCompare
+source). See ``paper/figures/gidea2020_epsilon_sweep.png``.
+
 This module also reproduces published TDA-on-crypto results as out-of-sample
 sanity checks before applying the pipeline to the Oct 10, 2025 cascade.
 ``replicate_gidea2020_fig7`` reproduces Figure 7c of

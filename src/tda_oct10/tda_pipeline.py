@@ -160,13 +160,17 @@ class TDAPipeline:
         the point cloud passed to Vietoris-Rips).
     max_edge_length :
         Largest edge length the VR filtration considers. The default
-        (``0.10``) is tuned for *raw* daily multi-crypto log-returns
-        (typical intra-window pairwise distance ~0.1; see the
-        ``sweep_max_edge_length`` study in ``validation.py`` for the
-        evidence). The Ismail-style default ``0.05`` only works after
-        per-window normalisation. For arbitrarily scaled inputs (e.g.
-        Lorenz), pass ``np.inf`` or a value large enough to span the
-        cloud diameter.
+        (``0.10``) was calibrated by parameter sweep on BTC/ETH/LTC/XRP
+        daily log-returns over 2016-01-02 to 2018-01-07: values
+        ``<= 0.05`` produce no detectable signal, while values
+        ``>= 0.15`` introduce spurious mid-2017 peaks driven by bull-run
+        volatility rather than the crash. See
+        ``paper/figures/gidea2020_epsilon_sweep.png`` for the
+        comparison panel and the ``sweep_max_edge_length`` study in
+        ``validation.py`` for the underlying data. The Ismail-style
+        default ``0.05`` only works after per-window normalisation. For
+        arbitrarily scaled inputs (e.g. Lorenz), pass ``np.inf`` or a
+        value large enough to span the cloud diameter.
     homology_dims :
         Homology dimensions to compute. Must include ``1``; ``0`` is
         included by default so the dict result has H_0 features too.
