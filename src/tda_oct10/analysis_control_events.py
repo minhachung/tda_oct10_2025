@@ -160,6 +160,16 @@ class EventConfig:
     analysis_end: pd.Timestamp
     cascade_center: pd.Timestamp
     pre_cascade_lead_minutes: int = PRE_CASCADE_LEAD_MINUTES
+    # Optional output-filename overrides. When ``None`` the default templates
+    # (``{name}_minute_main.png`` / ``{name}_surrogate_test.png``) are used.
+    # Session 11 calm controls set these so figures land at the
+    # ``calm_control_*`` filenames specified in the task brief.
+    main_plot_filename: Optional[str] = None
+    surrogate_plot_filename: Optional[str] = None
+    # Label drawn at ``cascade_center`` in the surrogate-test figure legend.
+    # Defaults to ``"cascade"`` (Sessions 8 – 10). Calm controls override to
+    # ``"synthetic center (calm)"`` so the plots don't mislabel a non-event.
+    center_label: str = "cascade"
 
     # -- derived windows --------------------------------------------------
     @property
@@ -194,11 +204,13 @@ class EventConfig:
 
     @property
     def main_plot_path(self) -> Path:
-        return _FIGURES_DIR / f"{self.name}_minute_main.png"
+        fname = self.main_plot_filename or f"{self.name}_minute_main.png"
+        return _FIGURES_DIR / fname
 
     @property
     def surrogate_plot_path(self) -> Path:
-        return _FIGURES_DIR / f"{self.name}_surrogate_test.png"
+        fname = self.surrogate_plot_filename or f"{self.name}_surrogate_test.png"
+        return _FIGURES_DIR / fname
 
 
 # ---------------------------------------------------------------------------
@@ -735,7 +747,12 @@ def _plot_surrogate_panels(
         label="observed",
     )
     ax_overlay.axvline(
-        config.cascade_center, color="black", lw=0.7, ls=":", alpha=0.7, label="cascade"
+        config.cascade_center,
+        color="black",
+        lw=0.7,
+        ls=":",
+        alpha=0.7,
+        label=config.center_label,
     )
     ax_overlay.set_yscale("log")
     ax_overlay.set_ylabel(r"$\|\lambda\|_1^{H_1}$ (log)")

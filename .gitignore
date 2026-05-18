@@ -73,3 +73,6 @@ Thumbs.db
 # Project data directories
 data/raw/
 data/processed/
+
+# Runtime logs
+logs/
