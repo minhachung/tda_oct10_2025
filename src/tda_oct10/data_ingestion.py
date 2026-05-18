@@ -52,6 +52,8 @@ __all__ = [
     "fetch_all",
     "load_aligned_returns",
     "cache_path",
+    "fetch_monthly_klines_archive",
+    "load_minute_returns_archive",
 ]
 
 logger = logging.getLogger(__name__)
@@ -617,6 +619,186 @@ def _warn_on_large_gaps(
                 UserWarning,
                 stacklevel=3,
             )
+
+
+# ---------------------------------------------------------------------------
+# Public archive (data.binance.vision) — geo-unrestricted bulk klines
+# ---------------------------------------------------------------------------
+#
+# The Binance REST API (`api.binance.com`) is geo-blocked from this
+# execution environment (HTTP 451), but the public bulk archive at
+# ``https://data.binance.vision/`` is a static S3-backed file server with
+# no geo restriction. It serves the same kline data, packaged as monthly
+# (and daily) ZIPped CSVs, e.g.
+#
+#     /data/spot/monthly/klines/BTCUSDT/1m/BTCUSDT-1m-2025-10.zip
+#
+# Files dated 2025 use *microsecond* open/close timestamps in column 0
+# and column 6, not milliseconds (Binance changed the format mid-2025).
+# `_parse_archive_csv` normalises this so callers always see UTC
+# timestamps regardless of the underlying scale.
+
+ARCHIVE_BASE = "https://data.binance.vision"
+
+# Same column layout as the REST klines plus we keep ``ignore`` for parity.
+_ARCHIVE_COLS = list(_KLINE_COLS)
+
+
+def _archive_monthly_url(pair: str, interval: str, year: int, month: int) -> str:
+    return (
+        f"{ARCHIVE_BASE}/data/spot/monthly/klines/{pair}/{interval}/"
+        f"{pair}-{interval}-{year:04d}-{month:02d}.zip"
+    )
+
+
+def _archive_cache_path(pair: str, interval: str, year: int, month: int) -> Path:
+    base = _CACHE_ROOT
+    base.mkdir(parents=True, exist_ok=True)
+    return base / f"{pair}_archive_{interval}_{year:04d}{month:02d}.parquet"
+
+
+def _detect_ts_scale(value: int) -> int:
+    """Return the divisor that converts ``value`` to seconds.
+
+    The Binance archive moved from millisecond to microsecond open/close
+    timestamps in 2025. A clean heuristic by magnitude: anything north of
+    ``1e15`` is microseconds, north of ``1e12`` is milliseconds, otherwise
+    seconds. Inside the function so that ``_parse_archive_csv`` can pick
+    the right ``pd.to_datetime`` unit per file.
+    """
+    if value > 1_000_000_000_000_000:
+        return 1_000_000  # μs
+    if value > 1_000_000_000_000:
+        return 1_000  # ms
+    return 1  # s
+
+
+def _parse_archive_csv(csv_bytes: bytes) -> pd.DataFrame:
+    """Parse a single monthly archive CSV into the same shape as ``_parse_klines``."""
+    from io import BytesIO
+
+    df = pd.read_csv(BytesIO(csv_bytes), header=None, names=_ARCHIVE_COLS)
+    if df.empty:
+        return pd.DataFrame(columns=_ARCHIVE_COLS).set_index(
+            pd.DatetimeIndex([], tz="UTC", name="timestamp")
+        )
+    # Strip an optional CSV header row if the archive includes one
+    # (only some monthly bundles do).
+    if not str(df["open_time"].iloc[0]).lstrip("-").isdigit():
+        df = df.iloc[1:].reset_index(drop=True)
+
+    open_time = df["open_time"].astype("int64")
+    scale = _detect_ts_scale(int(open_time.iloc[0]))
+    unit = {1_000_000: "us", 1_000: "ms", 1: "s"}[scale]
+    df.index = pd.to_datetime(open_time, unit=unit, utc=True).rename("timestamp")
+
+    numeric = [
+        "open", "high", "low", "close", "volume",
+        "quote_volume", "taker_buy_base", "taker_buy_quote",
+    ]
+    df[numeric] = df[numeric].astype(float)
+    df["trades"] = df["trades"].astype("int64")
+    df = df.drop(columns=["ignore"])
+    return df.sort_index()
+
+
+def _download_archive_zip(url: str, *, timeout: float = 60.0) -> bytes:
+    """Download a single archive ZIP, returning the inner CSV as bytes."""
+    import zipfile
+    from io import BytesIO
+
+    resp = requests.get(url, timeout=timeout)
+    if resp.status_code != 200:
+        raise RuntimeError(f"archive HTTP {resp.status_code} for {url}")
+    with zipfile.ZipFile(BytesIO(resp.content)) as zf:
+        # The archive contains a single .csv named after the symbol+interval+month.
+        names = [n for n in zf.namelist() if n.endswith(".csv")]
+        if len(names) != 1:
+            raise RuntimeError(f"unexpected archive contents: {names}")
+        return zf.read(names[0])
+
+
+def fetch_monthly_klines_archive(
+    symbol: str,
+    interval: str,
+    year: int,
+    month: int,
+    *,
+    use_cache: bool = True,
+) -> pd.DataFrame:
+    """Fetch one month of klines for ``symbol`` from ``data.binance.vision``.
+
+    Mirrors ``fetch_klines`` shape-wise (the same columns and a UTC
+    DatetimeIndex named ``"timestamp"``) but pulls a single static ZIP
+    rather than paginating REST. Cached on disk under ``data/raw/`` so
+    repeat calls do no network I/O.
+    """
+    pair = _to_pair(symbol)
+    path = _archive_cache_path(pair, interval, year, month)
+    if use_cache:
+        cached = _read_cache(path)
+        if cached is not None:
+            return cached
+    url = _archive_monthly_url(pair, interval, year, month)
+    logger.info("archive: %s", url)
+    csv_bytes = _download_archive_zip(url)
+    df = _parse_archive_csv(csv_bytes)
+    _write_cache(path, df)
+    return df
+
+
+def _iter_months(start: datetime, end: datetime) -> list[tuple[int, int]]:
+    """Inclusive list of ``(year, month)`` covering ``[start, end]``."""
+    y, m = start.year, start.month
+    out: list[tuple[int, int]] = []
+    while (y, m) <= (end.year, end.month):
+        out.append((y, m))
+        if m == 12:
+            y, m = y + 1, 1
+        else:
+            m += 1
+    return out
+
+
+def load_minute_returns_archive(
+    start: datetime,
+    end: datetime,
+    *,
+    symbols: Iterable[str] = SYMBOLS,
+    fill_threshold: pd.Timedelta = _GAP_FILL_THRESHOLD,
+) -> pd.DataFrame:
+    """Load 1-minute closes from the public Binance archive and return log-returns.
+
+    Aligns every symbol onto a 1-minute UTC grid, forward-fills NaN runs
+    strictly shorter than ``fill_threshold`` (default 5 min), warns on
+    anything longer, and returns ``log(close).diff()`` shaped
+    ``(n_minutes, len(symbols))``.
+    """
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    grid = _expected_grid(start, end, "1m")
+
+    closes: dict[str, pd.Series] = {}
+    for symbol in symbols:
+        frames: list[pd.DataFrame] = []
+        for y, m in _iter_months(start, end):
+            frames.append(fetch_monthly_klines_archive(symbol, "1m", y, m))
+        if not frames:
+            raise RuntimeError(f"no archive data for {symbol}")
+        df = pd.concat(frames).sort_index()
+        df = df[~df.index.duplicated(keep="first")]
+        df = df.loc[(df.index >= grid[0]) & (df.index <= grid[-1])]
+        close = df["close"].reindex(grid)
+        _warn_on_large_gaps(symbol, close, fill_threshold)
+        close = _fill_small_gaps(close, fill_threshold)
+        closes[symbol.upper()] = close
+
+    closes_df = pd.DataFrame(closes).dropna(how="any")
+    log_returns = np.log(closes_df).diff().dropna(how="any")
+    log_returns.index.name = "timestamp"
+    return log_returns
 
 
 # ---------------------------------------------------------------------------
