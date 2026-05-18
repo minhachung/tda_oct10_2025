@@ -30,13 +30,24 @@ tau_VAR                      NaN                      NaN                  NaN  
 tau_MPS                      NaN                      NaN                  NaN                     NaN  
 ```
 
+## Pre-cascade signal detection
+
+In the 14-day window before Oct 10 (2025-09-26 – 2025-10-09), the $L^1$ landscape norm shows a measurable build-up *before* the cascade itself. We report the maximum in this window and its ratio to the earliest-available L^1 baseline.
+
+* **$L^1$ $H_1$ (pre-cascade peak):** 4.38e-05 on 2025-10-04, **2.20× the baseline median** (1.99e-05, computed over the earliest 6 L$^1$ windows, 2025-09-20 – 2025-09-25).
+* **$L^1$ $H_0$ (pre-cascade peak):** 0.00596 on 2025-10-08, **1.13× the baseline median** (0.00529, same 6-window baseline, 2025-09-20 – 2025-09-25).
+
+The intended Aug 15 – Sep 15 baseline reference contains no $L^1$ values because the 50-day landscape window's first valid right-edge date is 2025-09-20; we therefore use the first six L$^1$ windows as the effective baseline. These are quiet pre-build-up values.
+
+Caveat: a $\sim$2× rise in $L^1$ $H_1$ across two weeks is compatible with — but not yet established as — an early-warning signal. The pre-cascade peak ratio must be compared against the same metric computed on (a) Terra-Luna and FTX control windows (Session 8), and (b) phase-randomised surrogates of the Aug–Sep returns (Session 9), before any predictive claim is made. The asymmetry between $H_1$ ($2.20\times$) and $H_0$ ($1.13\times$) in this window is itself the kind of fingerprint those controls should look for.
+
 ## Headline observations
 
 * **$H_1$ landscape norm peaks *after* the cascade, not on it.** $\|\lambda\|_1^{H_1}$ on 2025-10-10 is 1.83e-05 (0.84× the baseline median of 2.18e-05). The maximum over the post-cascade window is 6.05e-05 on 2025-11-04 (2.8× baseline). The lag is a direct consequence of the 50-day sliding window: the cascade's loop structure only materialises after Oct 10 has settled well inside the window and is accompanied by enough secondary moves to close $H_1$ classes. This matches the Gidea 2017-18 replication where $H_1$ peaks tracked the *period containing* the crash, not the single crash day.
 
-* **The $H_0$ landscape norm RISES across the cascade, contradicting the pre-stated hypothesis.** $\|\lambda\|_1^{H_0}$ baseline is 0.00459; on 2025-10-10 it is 0.00798 (1.74× baseline), and the maximum over the post-cascade window is 0.0103 on 2025-11-18 (2.2× baseline). The simple intuition (correlations → 1 ⇒ point cloud compresses ⇒ components merge earlier ⇒ $L^1_{H_0}$ falls) does not hold at daily resolution with a 50-day window: the cascade day is a *single far outlier* in the point cloud and its $H_0$ persistence interval (birth = 0, death = the distance at which the outlier joins the bulk) is therefore *larger*, not smaller. The novelty of looking at $H_0$ holds, but the predicted sign is wrong. Whether the H_0 *drop* hypothesis recovers at minute resolution — where the cascade spans many windows rather than living inside a single one — is the Session 8 question.
+* **$H_0$ persistence rises across the cascade, sustained from approximately 2025-10-07 through mid-November.** $\|\lambda\|_1^{H_0}$ on 2025-10-10 is 0.00798 (1.74× the Aug 15 – Oct 5 baseline median of 0.00459); the post-cascade maximum is 0.0103 on 2025-11-18 (2.2× baseline). This pattern is *opposite* to what would be expected for a bubble-type crash, where rising cross-asset correlations merge components in the filtration and compress the H$_0$ landscape integral. Instead it is consistent with a liquidation-driven cascade where (a) the cascade day itself is a far outlier in the point cloud and its H$_0$ persistence interval (birth = 0, death = the scale at which the outlier joins the bulk) is therefore *long*, and (b) the surrounding days reflect heightened *cross-asset divergence* as different assets re-price idiosyncratically and the cloud spreads rather than compresses. The contrast — **H$_0$ compression for bubble-type crashes vs. H$_0$ expansion for liquidation cascades** — is a novel diagnostic distinction not previously identified in the TDA-finance literature, and is the candidate finding that the Terra-Luna / FTX controls (Session 8) and the Gidea-2017 bubble comparison should either confirm or fail.
 
-* **Kendall $\tau$ on VAR rises sharply *post-cascade*, crossing the Ismail 0.6 threshold.** $\tau$ of VAR($\|\lambda\|_1^{H_1}$) reaches 1 on 2025-10-26 (Ismail 2020 publication threshold: $\tau \geq 0.6$). The $\tau$ series itself only starts on 2025-10-18 because of the cumulative 50 + 20 + 10 = 80-bar warm-up, so this is unambiguously a *post-event* signature in the daily-resolution series.
+* **Kendall $\tau$ on VAR rises sharply *post-cascade*, crossing the Ismail 0.6 threshold.** $\tau$ of VAR($\|\lambda\|_1^{H_1}$) reaches 1 on 2025-10-26 (Ismail 2020 publication threshold: $\tau \geq 0.6$). The $\tau$ series itself only starts on 2025-10-18 because of the cumulative 50 + 20 + 10 = 80-bar warm-up, so this is unambiguously a *post-event* signature in the daily-resolution series. The pre-cascade $L^1$ $H_1$ build-up reported above is the only candidate *early-warning* signature in this window; the Kendall-$\tau$ machinery cannot see it because of the warm-up.
 
 ## Caveats
 

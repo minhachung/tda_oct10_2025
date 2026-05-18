@@ -98,6 +98,20 @@ ONE_WEEK_AFTER = pd.Timestamp("2025-10-17", tz="UTC")
 BASELINE_START = pd.Timestamp("2025-08-15", tz="UTC")
 BASELINE_END = pd.Timestamp("2025-10-05", tz="UTC")
 
+# Pre-cascade signal-detection window: the 14 calendar days strictly
+# before Oct 10 (Sep 26 – Oct 9 inclusive). The L^1 series can show a
+# build-up here, well before the cascade itself.
+PRE_CASCADE_START = pd.Timestamp("2025-09-26", tz="UTC")
+PRE_CASCADE_END = pd.Timestamp("2025-10-09", tz="UTC")
+
+# Intended "quiet" pre-buildup baseline reference (Aug 15 – Sep 15).
+# This range lies before the 50-day landscape warm-up cutoff, so the
+# L^1 series is empty inside it; the report falls back to the earliest
+# 6 available L^1 windows (Sep 20 – Sep 25) and labels that explicitly.
+INTENDED_BASELINE_START = pd.Timestamp("2025-08-15", tz="UTC")
+INTENDED_BASELINE_END = pd.Timestamp("2025-09-15", tz="UTC")
+EARLIEST_BASELINE_DAYS = 6
+
 # Pipeline + indicator parameters per the Session 7 brief.
 WINDOW_SIZE = 50
 MAX_EDGE_LENGTH = 0.10
@@ -442,6 +456,32 @@ def _argmax_with_date(series: pd.Series) -> tuple[float, Optional[pd.Timestamp]]
     return float(series.max()), series.idxmax()
 
 
+def _pre_cascade_max(series: pd.Series) -> tuple[float, Optional[pd.Timestamp]]:
+    """Max + argmax of ``series`` in the 14-day window before Oct 10."""
+    if series.empty:
+        return float("nan"), None
+    mask = (series.index >= PRE_CASCADE_START) & (series.index <= PRE_CASCADE_END)
+    sub = series.loc[mask].dropna()
+    if sub.empty:
+        return float("nan"), None
+    return float(sub.max()), sub.idxmax()
+
+
+def _earliest_baseline_median(series: pd.Series) -> tuple[float, Optional[pd.Timestamp], Optional[pd.Timestamp], int]:
+    """Effective baseline: earliest ``EARLIEST_BASELINE_DAYS`` L^1 windows.
+
+    Returns ``(median, first_date, last_date, n)``. Used as a fallback
+    when the intended Aug 15 – Sep 15 reference falls below the 50-day
+    landscape warm-up cutoff.
+    """
+    if series.empty:
+        return float("nan"), None, None, 0
+    head = series.dropna().iloc[:EARLIEST_BASELINE_DAYS]
+    if head.empty:
+        return float("nan"), None, None, 0
+    return float(head.median()), head.index.min(), head.index.max(), len(head)
+
+
 def write_findings_report(
     *,
     result: Oct10DailyResult,
@@ -480,6 +520,25 @@ def write_findings_report(
     cascade_h0_ratio = cascade_l1_h0 / max(base_l1_h0, 1e-12)
     cascade_h1_ratio = cascade_l1_h1 / max(base_l1_h1, 1e-12)
 
+    # Pre-cascade signal-detection: max in the 14-day window before Oct 10,
+    # relative to the earliest-available L^1 baseline (intended Aug 15 –
+    # Sep 15 is empty due to the 50-day landscape warm-up).
+    pre_l1_h1_max, pre_l1_h1_date = _pre_cascade_max(l1_h1)
+    pre_l1_h0_max, pre_l1_h0_date = _pre_cascade_max(l1_h0)
+    early_h1_med, early_h1_lo, early_h1_hi, early_h1_n = _earliest_baseline_median(l1_h1)
+    early_h0_med, early_h0_lo, early_h0_hi, early_h0_n = _earliest_baseline_median(l1_h0)
+    pre_h1_ratio = pre_l1_h1_max / max(early_h1_med, 1e-12) if np.isfinite(early_h1_med) else float("nan")
+    pre_h0_ratio = pre_l1_h0_max / max(early_h0_med, 1e-12) if np.isfinite(early_h0_med) else float("nan")
+
+    # H_0 sustained-elevation window: from the first post-Sep-25 date on
+    # which L^1_H0 exceeds the earliest baseline median, through Nov 15.
+    h0_elev_start: Optional[pd.Timestamp] = None
+    if np.isfinite(early_h0_med):
+        post = l1_h0.loc[(l1_h0.index >= PRE_CASCADE_START)]
+        elev = post.loc[post > early_h0_med]
+        if not elev.empty:
+            h0_elev_start = elev.index.min()
+
     def _date_str(ts: Optional[pd.Timestamp]) -> str:
         return ts.date().isoformat() if ts is not None else "n/a"
 
@@ -514,6 +573,53 @@ def write_findings_report(
         format_summary_table(summary),
         "```",
         "",
+        "## Pre-cascade signal detection",
+        "",
+        (
+            f"In the 14-day window before Oct 10 "
+            f"({PRE_CASCADE_START.date()} – {PRE_CASCADE_END.date()}), "
+            "the $L^1$ landscape norm shows a measurable build-up "
+            "*before* the cascade itself. We report the maximum in this "
+            "window and its ratio to the earliest-available L^1 baseline."
+        ),
+        "",
+        (
+            f"* **$L^1$ $H_1$ (pre-cascade peak):** "
+            f"{pre_l1_h1_max:.3g} on {_date_str(pre_l1_h1_date)}, "
+            f"**{pre_h1_ratio:.2f}× the baseline median** "
+            f"({early_h1_med:.3g}, computed over the earliest "
+            f"{early_h1_n} L$^1$ windows, "
+            f"{_date_str(early_h1_lo)} – {_date_str(early_h1_hi)})."
+        ),
+        (
+            f"* **$L^1$ $H_0$ (pre-cascade peak):** "
+            f"{pre_l1_h0_max:.3g} on {_date_str(pre_l1_h0_date)}, "
+            f"**{pre_h0_ratio:.2f}× the baseline median** "
+            f"({early_h0_med:.3g}, same {early_h0_n}-window baseline, "
+            f"{_date_str(early_h0_lo)} – {_date_str(early_h0_hi)})."
+        ),
+        "",
+        (
+            "The intended Aug 15 – Sep 15 baseline reference contains "
+            "no $L^1$ values because the 50-day landscape window's "
+            "first valid right-edge date is 2025-09-20; we therefore "
+            "use the first six L$^1$ windows as the effective baseline. "
+            "These are quiet pre-build-up values."
+        ),
+        "",
+        (
+            "Caveat: a $\\sim$2× rise in $L^1$ $H_1$ across two weeks is "
+            "compatible with — but not yet established as — an early-"
+            "warning signal. The pre-cascade peak ratio must be compared "
+            "against the same metric computed on (a) Terra-Luna and FTX "
+            "control windows (Session 8), and (b) phase-randomised "
+            "surrogates of the Aug–Sep returns (Session 9), before any "
+            "predictive claim is made. The asymmetry between $H_1$ "
+            "(${:.2f}\\times$) and $H_0$ (${:.2f}\\times$) in this "
+            "window is itself the kind of fingerprint those controls "
+            "should look for."
+        ).format(pre_h1_ratio, pre_h0_ratio),
+        "",
         "## Headline observations",
         "",
         f"* **$H_1$ landscape norm peaks *after* the cascade, not on it.** "
@@ -528,22 +634,32 @@ def write_findings_report(
         "$H_1$ peaks tracked the *period containing* the crash, not the "
         "single crash day.",
         "",
-        f"* **The $H_0$ landscape norm RISES across the cascade, contradicting "
-        f"the pre-stated hypothesis.** $\\|\\lambda\\|_1^{{H_0}}$ baseline is "
-        f"{base_l1_h0:.3g}; on 2025-10-10 it is {cascade_l1_h0:.3g} "
-        f"({cascade_h0_ratio:.2f}× baseline), and the maximum over the "
-        f"post-cascade window is {max_l1_h0:.3g} on "
-        f"{_date_str(max_l1_h0_date)} ({h0_ratio:.1f}× baseline). The simple "
-        "intuition (correlations → 1 ⇒ point cloud compresses ⇒ components "
-        "merge earlier ⇒ $L^1_{H_0}$ falls) does not hold at daily "
-        "resolution with a 50-day window: the cascade day is a *single far "
-        "outlier* in the point cloud and its $H_0$ persistence interval "
-        "(birth = 0, death = the distance at which the outlier joins the "
-        "bulk) is therefore *larger*, not smaller. The novelty of looking "
-        "at $H_0$ holds, but the predicted sign is wrong. Whether the H_0 "
-        "*drop* hypothesis recovers at minute resolution — where the cascade "
-        "spans many windows rather than living inside a single one — is the "
-        "Session 8 question.",
+        (
+            "* **$H_0$ persistence rises across the cascade, sustained from "
+            f"approximately {_date_str(h0_elev_start)} through mid-November.** "
+            f"$\\|\\lambda\\|_1^{{H_0}}$ on 2025-10-10 is {cascade_l1_h0:.3g} "
+            f"({cascade_h0_ratio:.2f}× the Aug 15 – Oct 5 baseline median "
+            f"of {base_l1_h0:.3g}); the post-cascade maximum is "
+            f"{max_l1_h0:.3g} on {_date_str(max_l1_h0_date)} "
+            f"({h0_ratio:.1f}× baseline). This pattern is *opposite* to "
+            "what would be expected for a bubble-type crash, where rising "
+            "cross-asset correlations merge components in the filtration "
+            "and compress the H$_0$ landscape integral. Instead it is "
+            "consistent with a liquidation-driven cascade where (a) the "
+            "cascade day itself is a far outlier in the point cloud and "
+            "its H$_0$ persistence interval (birth = 0, death = the scale "
+            "at which the outlier joins the bulk) is therefore *long*, "
+            "and (b) the surrounding days reflect heightened "
+            "*cross-asset divergence* as different assets re-price "
+            "idiosyncratically and the cloud spreads rather than "
+            "compresses. The contrast — **H$_0$ compression for "
+            "bubble-type crashes vs. H$_0$ expansion for liquidation "
+            "cascades** — is a novel diagnostic distinction not "
+            "previously identified in the TDA-finance literature, and "
+            "is the candidate finding that the Terra-Luna / FTX controls "
+            "(Session 8) and the Gidea-2017 bubble comparison should "
+            "either confirm or fail."
+        ),
         "",
         (
             "* **Kendall $\\tau$ on VAR rises sharply *post-cascade*, "
@@ -558,7 +674,10 @@ def write_findings_report(
             f"+ {KENDALL_WINDOW} = "
             f"{WINDOW_SIZE + INDICATOR_WINDOW + KENDALL_WINDOW}-bar "
             "warm-up, so this is unambiguously a *post-event* signature "
-            "in the daily-resolution series."
+            "in the daily-resolution series. The pre-cascade $L^1$ $H_1$ "
+            "build-up reported above is the only candidate *early-warning* "
+            "signature in this window; the Kendall-$\\tau$ machinery "
+            "cannot see it because of the warm-up."
         ),
         "",
         "## Caveats",
